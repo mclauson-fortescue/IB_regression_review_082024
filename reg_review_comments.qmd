@@ -1,0 +1,507 @@
+---
+title: "IB regresion review - comments"
+format: html
+execute: 
+  cache: false
+---
+
+investigate comments from ib regression review.
+
+Tasks
+
+Add Phase 1 DTR comparison to Phase 1 HIG 6 DTW
+Check HIG P6 vs P5 LIMS recovery modelling
+DTR Phase 1 comparison into Mass Recovery model scenarios and see how that trends- MC
+P5 HIG 5 and P6 HIG 6 comparison to see significance of choosing P6 as reference - MC
+Check phase 1 DTR data to cubist model- 7 rules 53 micron i.e., phase 1 head data, back flagging - MC
+
+To do:
+
+Compare DTR to HIG6 
+Compare DTR to HIG5 
+Compare HIG5 to HIG6 
+
+Apply cubist rules model to 53 micron data & hig? 
+
+```{r}
+library(tidyverse)
+library(here)
+library(ggstatsplot)
+
+## ggplot theme
+theme_mc <- function(base_size = 16) {
+    theme_bw(base_size = base_size) %+replace%
+        theme(
+            # L'ensemble de la figure
+            plot.title = element_text(size = rel(1), face = "bold", margin = margin(0, 0, 5, 0), hjust = 0),
+            # Zone où se situe le graphique
+            panel.grid.minor = element_blank(),
+            panel.border = element_blank(),
+            # Les axes
+            axis.title = element_text(size = rel(0.75), face = "bold"),
+            axis.text = element_text(size = rel(0.60), face = "bold"),
+            axis.line = element_line(color = "black", arrow = arrow(length = unit(0.3, "lines"), type = "closed")),
+            # La légende
+            legend.title = element_text(size = rel(0.75), face = "bold"),
+            legend.text = element_text(size = rel(0.60), face = "bold"),
+            legend.key = element_rect(fill = "transparent", colour = NA),
+            legend.key.size = unit(1.5, "lines"),
+            legend.background = element_rect(fill = "transparent", colour = NA),
+            legend.position = "bottom",
+            # Les étiquettes dans le cas d'un facetting
+            strip.background = element_rect(fill = "#17252D", color = "#17252D"),
+            strip.text = element_text(size = rel(0.75), face = "bold", color = "white", margin = margin(5, 0, 5, 0))
+        )
+}
+
+theme_set(theme_mc())
+```
+ 
+```{r}
+# import data
+
+# hig
+hig_data <- read_csv(here("data\\DTR_OPF_extraction.csv"))
+lims_data <- read_csv(here("data\\LIMS_run.csv"))
+dms_data <- read_csv(here("data\\DMS_run.csv"))
+
+MR <- lims_data %>% 
+  filter(process_phase == "Mags(calc)") %>% 
+  select(hole_id, comp_no, mass_pct) %>% 
+  rename(mass_pct_lims = mass_pct) %>% 
+  full_join(dms_data %>% filter(process_phase == "DMS Mags") %>% select(hole_id, comp_no, mass_pct) %>% rename(mass_pct_dms = mass_pct), by = c("hole_id","comp_no")) %>% 
+  full_join(hig_data %>% filter(type == "DTR Mags"), by = c("hole_id", "comp_no")) %>% 
+  mutate(HIG_DTR_MR = ((mass_pct_lims/100)*(mass_pct_dms/100)*(mass_pct/100))*100) %>% 
+  select(hole_id, comp_no, HIG_DTR_MR, pass, type)
+
+hig_data <- hig_data %>% 
+  full_join(MR, by = c("comp_no", "hole_id", "pass", "type")) %>% 
+  full_join(dms_data %>% filter(process_phase == "Calc Head") %>% select(hole_id, comp_no, Fe3O4_pct_SATMAGAN) %>% rename(Fe3O4_pct_head = Fe3O4_pct_SATMAGAN), by = c("hole_id", "comp_no"))
+
+# dtr
+dtr_mass <- read_csv(here("data\\dtr_head_mass_rec.csv"))
+dtr_assay <- read_csv(here("data\\all_assays_chd.csv"))
+
+dtr_data <- dtr_mass %>%
+  select(-c(Fe_pct_XRF, SiO2_pct_XRF)) %>%
+  left_join(dtr_assay, by = c("hole_id", "comp_no", "grind_P97"))
+
+dtr_53 <- dtr_data %>%
+  filter(grind_P97 == 53)
+ 
+ # hig and dtr 
+ 
+hig_dtr <- dtr_data %>% 
+  rename_with(~paste0(., "_dtr"), .cols = grind_P97:FeO_titration) %>% 
+  full_join(hig_data, by = c("hole_id", "comp_no"))
+
+## hig5 data 
+
+hig_dtr_p5_cons <- 
+  hig_dtr %>% 
+  filter(pass == "P5" & type == "DTR Mags", process_phase_dtr == "Cons") %>% 
+  select(hole_id, comp_no,process_phase_dtr, grind_P97_dtr, con_mass_rec_pct_dtr, mass_pct, Fe3O4_pct_SATMAGAN_dtr, Fe3O4_pct_SATMAGAN, Fe_pct_XRF_dtr, Fe_pct_XRF, Fe3O4_pct_head, HIG_DTR_MR) %>% 
+  rename(dtr_mass_rec = con_mass_rec_pct_dtr, HIG5_mass_rec = mass_pct, Fe3O4_pct_dtr =Fe3O4_pct_SATMAGAN_dtr, Fe3O4_pct_HIG5 = Fe3O4_pct_SATMAGAN, Fe_pct_dtr = Fe_pct_XRF_dtr, Fe_pct_HIG5 = Fe_pct_XRF) %>% 
+  pivot_longer(cols = c(dtr_mass_rec, HIG_DTR_MR)) %>% 
+  rename(dtr_test = name, dtr_value = value) %>% 
+  pivot_longer(cols = c(Fe3O4_pct_dtr, Fe3O4_pct_head)) %>% 
+  rename(fe3o4_test = name, fe3o4_value = value) %>% 
+  pivot_longer(cols = c(Fe_pct_dtr, Fe_pct_HIG5))
+
+hig_dtr_p5_head <- 
+  hig_dtr %>% 
+  filter(pass == "P5" & type == "Calc Head", process_phase_dtr == "Feed") %>% 
+  select(hole_id, comp_no,process_phase_dtr, grind_P97_dtr, con_mass_rec_pct_dtr, mass_pct, Fe3O4_pct_SATMAGAN_dtr, Fe3O4_pct_SATMAGAN, Fe_pct_XRF_dtr, Fe_pct_XRF, Fe3O4_pct_head, HIG_DTR_MR) %>% 
+  rename(dtr_mass_rec = con_mass_rec_pct_dtr, HIG5_mass_rec = mass_pct, Fe3O4_pct_dtr =Fe3O4_pct_SATMAGAN_dtr, Fe3O4_pct_HIG5 = Fe3O4_pct_SATMAGAN, Fe_pct_dtr = Fe_pct_XRF_dtr, Fe_pct_HIG5 = Fe_pct_XRF) %>% 
+  pivot_longer(cols = c(dtr_mass_rec, HIG_DTR_MR)) %>% 
+  rename(dtr_test = name, dtr_value = value) %>% 
+  pivot_longer(cols = c(Fe3O4_pct_dtr, Fe3O4_pct_head)) %>% 
+  rename(fe3o4_test = name, fe3o4_value = value) %>% 
+  pivot_longer(cols = c(Fe_pct_dtr, Fe_pct_HIG5))
+
+## hig6 
+
+hig_dtr_p6_cons <- 
+  hig_dtr %>% 
+  filter(pass == "P6" & type == "DTR Mags", process_phase_dtr == "Cons") %>% 
+  select(hole_id, comp_no,process_phase_dtr, grind_P97_dtr, con_mass_rec_pct_dtr, mass_pct, Fe3O4_pct_SATMAGAN_dtr, Fe3O4_pct_SATMAGAN, Fe_pct_XRF_dtr, Fe_pct_XRF, Fe3O4_pct_head, HIG_DTR_MR) %>% 
+  rename(dtr_mass_rec = con_mass_rec_pct_dtr, HIG5_mass_rec = mass_pct, Fe3O4_pct_dtr =Fe3O4_pct_SATMAGAN_dtr, Fe3O4_pct_HIG5 = Fe3O4_pct_SATMAGAN, Fe_pct_dtr = Fe_pct_XRF_dtr, Fe_pct_HIG5 = Fe_pct_XRF) %>% 
+  pivot_longer(cols = c(dtr_mass_rec, HIG_DTR_MR)) %>% 
+  rename(dtr_test = name, dtr_value = value) %>% 
+  pivot_longer(cols = c(Fe3O4_pct_dtr, Fe3O4_pct_head)) %>% 
+  rename(fe3o4_test = name, fe3o4_value = value) %>% 
+  pivot_longer(cols = c(Fe_pct_dtr, Fe_pct_HIG5))
+
+hig_dtr_p6_head <- 
+  hig_dtr %>% 
+  filter(pass == "P6" & type == "Calc Head", process_phase_dtr == "Feed") %>% 
+  select(hole_id, comp_no,process_phase_dtr, grind_P97_dtr, con_mass_rec_pct_dtr, mass_pct, Fe3O4_pct_SATMAGAN_dtr, Fe3O4_pct_SATMAGAN, Fe_pct_XRF_dtr, Fe_pct_XRF, Fe3O4_pct_head, HIG_DTR_MR) %>% 
+  rename(dtr_mass_rec = con_mass_rec_pct_dtr, HIG5_mass_rec = mass_pct, Fe3O4_pct_dtr =Fe3O4_pct_SATMAGAN_dtr, Fe3O4_pct_HIG5 = Fe3O4_pct_SATMAGAN, Fe_pct_dtr = Fe_pct_XRF_dtr, Fe_pct_HIG5 = Fe_pct_XRF) %>% 
+  pivot_longer(cols = c(dtr_mass_rec, HIG_DTR_MR)) %>% 
+  rename(dtr_test = name, dtr_value = value) %>% 
+  pivot_longer(cols = c(Fe3O4_pct_dtr, Fe3O4_pct_head)) %>% 
+  rename(fe3o4_test = name, fe3o4_value = value) %>% 
+  pivot_longer(cols = c(Fe_pct_dtr, Fe_pct_HIG5))
+```
+
+# DTR to HIG Comparison 
+
+LIMS Feed is needed to compare properly?
+
+```{r}
+
+## dtr mass recovery
+
+ggbetweenstats(
+  hig_dtr_p5_cons %>% filter(grind_P97_dtr == 53),
+  x = dtr_test,
+  y = dtr_value,
+  grouping.var = grind_P97_dtr,
+  k = 2,
+  title = "Comparison of DTR P97 53 & HIG5 DTW Mass Recovery"
+)
+
+
+ggscatterstats(
+  hig_dtr %>% filter(grind_P97_dtr == 53 & pass == "P5" & process_phase_dtr == "Cons" & type == "DTR Mags"),
+  x = con_mass_rec_pct_dtr,
+  y = HIG_DTR_MR,
+  grouping.var = grind_P97_dtr,
+  k = 2,
+  title = "Comparison of DTR P97 53 & HIG5 DTW Mass Recovery"
+) 
+
+## head satmagan
+
+ggbetweenstats(
+  hig_dtr_p5_head %>% filter(grind_P97_dtr == 53),
+  x = fe3o4_test,
+  y = fe3o4_value, 
+  title = "Comparison of DTR P97 53 & HIG5 Head Fe3O4 %"
+)
+
+ggscatterstats(
+  hig_dtr %>% filter(grind_P97_dtr == 53 & pass == "P5" & process_phase_dtr == "Feed" & type == "DTR Mags"),
+  x = Fe3O4_pct_SATMAGAN_dtr,
+  y = Fe3O4_pct_head,
+  grouping.var = grind_P97_dtr,
+  k = 2,
+  title = "Comparison of DTR P97 53 & HIG5 Fe3O4 %"
+)
+
+## fe %
+
+ggbetweenstats(
+  hig_dtr_p5_cons %>% filter(grind_P97_dtr == 53),
+  x = name,
+  y = value, 
+  grouping.var = grind_P97_dtr,
+  title = "Comparison of DTR P97 53 & HIG5 Con Fe %"
+)
+
+ggscatterstats(
+  hig_dtr %>% filter(grind_P97_dtr == 53 & pass == "P5" & process_phase_dtr == "Cons" & type == "DTR Mags"),
+  x = Fe_pct_XRF_dtr,
+  y = Fe_pct_XRF,
+  grouping.var = grind_P97_dtr,
+  k = 2,
+  title = "Comparison of DTR P97 53 & HIG5 Fe %"
+) 
+
+```
+
+
+```{r}
+
+## dtr mass recovery
+
+ggbetweenstats(
+  hig_dtr_p6_cons %>% filter(grind_P97_dtr == 53),
+  x = dtr_test,
+  y = dtr_value,
+  xlab = "DTR Test",
+  ylab = "Mass Recovery %",
+  grouping.var = grind_P97_dtr,
+  k = 2,
+  title = "Comparison of DTR P97 53 & HIG6 DTW Mass Recovery"
+)
+
+ggscatterstats(
+  hig_dtr %>% filter(grind_P97_dtr == 53 & pass == "P6" & process_phase_dtr == "Cons" & type == "DTR Mags"),
+  x = con_mass_rec_pct_dtr,
+  y = HIG_DTR_MR,
+  grouping.var = grind_P97_dtr,
+  k = 2,
+  title = "Comparison of DTR P97 53 & HIG6 DTW Mass Recovery"
+)
+
+## head satmagan
+
+ggbetweenstats(
+  hig_dtr_p6_head %>% filter(grind_P97_dtr == 53),
+  x = fe3o4_test,
+  y = fe3o4_value, 
+  ylab = "Head Fe3O4 %",
+  xlab = "DTR Test",
+  title = "Comparison of DTR P97 53 & HIG6 Head Fe3O4 %"
+)
+
+ggscatterstats(
+  hig_dtr %>% filter(grind_P97_dtr == 53 & pass == "P6" & process_phase_dtr == "Feed" & type == "DTR Mags"),
+  x = Fe3O4_pct_SATMAGAN_dtr,
+  y = Fe3O4_pct_head,
+  grouping.var = grind_P97_dtr,
+  k = 2,
+  title = "Comparison of DTR P97 53 & HIG6 Fe3O4 %"
+)
+
+## fe %
+
+ggbetweenstats(
+  hig_dtr_p6_cons %>% filter(grind_P97_dtr == 53),
+  x = name,
+  y = value, 
+  grouping.var = grind_P97_dtr,
+  title = "Comparison of DTR P97 53 & HIG6 Con Fe %"
+)
+
+ggscatterstats(
+  hig_dtr %>% filter(grind_P97_dtr == 53 & pass == "P6" & process_phase_dtr == "Cons" & type == "DTR Mags"),
+  x = Fe_pct_XRF_dtr,
+  y = Fe_pct_XRF,
+  grouping.var = grind_P97_dtr,
+  k = 2,
+  title = "Comparison of DTR P97 53 & HIG6 Fe %"
+) 
+```
+
+# Model Comparison
+
+Compare modelling mass recovery to hig5/6 based on head fe3o4 
+
+```{r}
+library(parameters)
+library(see)
+p5_m <- hig_data %>% 
+  filter(type == "DTR Mags" & pass == "P5")
+
+p5_m1 <- lm(HIG_DTR_MR ~ Fe3O4_pct_head, data = p5_m)
+
+p5_m <- hig_data %>% 
+  filter(type == "DTR Mags" & pass == "P6")
+
+p6_m1 <- lm(HIG_DTR_MR ~ Fe3O4_pct_head, data = p5_m)
+
+performance::compare_performance(p5_m1, p6_m1)
+bind_rows(broom::tidy(p5_m1) %>% mutate(model = "HIG5 MR"), broom::tidy(p6_m1) %>% mutate(model = "HIG6 MR"))
+p5_params <- parameters(p5_m1)
+p6_params <- parameters(p6_m1)
+p5_params$model <- "HIG5 MR"
+p6_params$model <- "HIG6 MR"
+
+combined_params <- rbind(p5_params, p6_params)
+ggplot(combined_params, aes(x = Parameter, y = Coefficient, color = model)) +
+  geom_point(position = position_dodge(width = 0.5)) +
+  geom_errorbar(aes(ymin = CI_low, ymax = CI_high), width = 0.2, position = position_dodge(width = 0.5)) +
+  labs(title = "Comparison of Coefficients from Different Models",
+       y = "Coefficient Estimate",
+       x = "Parameter") +
+  coord_flip()
+```
+
+
+# HIG5 vs HIG6 
+
+```{r}
+library(ggstatsplot)
+
+hig56 <- hig_data %>% 
+  filter(pass %in% c("P5", "P6") & type == "DTR Mags") %>% 
+  select(HIG_DTR_MR, Fe_pct_XRF, pass) %>% 
+  pivot_longer(cols = c(HIG_DTR_MR, Fe_pct_XRF))
+
+ggwithinstats(
+  hig56 %>% filter(name == "HIG_DTR_MR"),
+  x = pass,
+  y = value,
+  title = "DTW Mass % HIG P5 to P6",
+  ylab = "Mass %"
+)
+
+ggwithinstats(
+  hig56 %>% filter(name == "Fe_pct_XRF"),
+  x = pass,
+  y = value,
+    title = "Fe Con % HIG P5 to P6",
+  ylab = "Fe %"
+)
+
+# feed fe3o4 
+
+hig56 <- hig_data %>% 
+  filter(pass %in% c("P5", "P6") & type == "Head") %>% 
+  select(Fe3O4_pct_SATMAGAN, pass) %>% 
+  pivot_longer(cols = c(Fe3O4_pct_SATMAGAN)) 
+
+ggwithinstats(
+  hig56,
+  x = pass,
+  y = value,
+    title = "Head Fe3O4 % HIG P5 to P6",
+  ylab = "Fe3O4 %"
+)
+```
+
+# Cubist Model
+
+```{r}
+# DTR 
+
+hig_cubist <- dms_data %>% 
+  filter(process_phase == "Calc Head") %>% 
+  mutate(SCSE_kwh_t = 6.08 + Al2O3_pct_XRF * 0.40 + LOI371_pct * -0.07 * log10(Cr_pct_XRF) * 0.42 + Fe_pct_XRF * 0.25 + Cr_pct_XRF *0.01 + LOI650_pct*0.03 + LOI1000_pct*0.11 + (Al2O3_pct_XRF * LOI371_pct) * -0.20 + (log10(Cr_pct_XRF)*Fe_pct_XRF)*0.05) %>% 
+  mutate(bbwi_kwh_t = 15.50+ Al2O3_pct_XRF*0.41+LOI371_pct*0.36+Fe_pct_XRF*-0.01+Cr_pct_XRF*0+CaO_pct_XRF*0.34+(Al2O3_pct_XRF*LOI371_pct)*1.64+(Fe_pct_XRF*Cr_pct_XRF)*0.24+(LOI371_pct*CaO_pct_XRF)*0.98)
+
+cubist_7_hig <- hig_cubist %>%
+  mutate(
+    result = case_when(
+      (K2O_pct_XRF > 0.053) &
+        (bbwi_kwh_t <= 21.40164) & ((1 * Fe3O4_pct_SATMAGAN + 3) > 29.65) ~
+        106.9608 - (0.284 * SiO2_pct_XRF) - (0.289 * Fe_pct_XRF) + (59 * Cr_pct_XRF) - (1.09 * K2O_pct_XRF) - (0.68 * SCSE_kwh_t) - (4.2 * Mn_pct_XRF) - (0.92 * MgO_pct_XRF) - (0.197 * bbwi_kwh_t) - (7.5 * TiO2_pct_XRF) - (0.074 * Fe3O4_pct_SATMAGAN) - (4.1 * Na2O_pct_XRF) + (0.02 * Al2O3_pct_XRF),
+      
+      (K2O_pct_XRF > 0.053) &
+        (bbwi_kwh_t > 16.71903) &
+        (bbwi_kwh_t <= 21.40164) & ((1 * Fe3O4_pct_SATMAGAN + 3) <= 29.65) ~
+        92.9957 - (29.4 * TiO2_pct_XRF) + (84 * Cr_pct_XRF) - (0.225 * SiO2_pct_XRF) + (0.63 * Al2O3_pct_XRF) - (0.75 * SCSE_kwh_t) - (0.222 * Fe_pct_XRF) - (0.95 * K2O_pct_XRF) - (4.1 * Mn_pct_XRF) - (0.93 * MgO_pct_XRF) + (0.088 * Fe3O4_pct_SATMAGAN) - (5.7 * Na2O_pct_XRF) + (0.133 * bbwi_kwh_t) + (0.9 * S_pct_XRF),
+      
+      (K2O_pct_XRF <= 0.053) &
+        (Fe3O4_pct_SATMAGAN > 15.85) & (bbwi_kwh_t <= 17.03675) ~
+        11.3634 - (10.9 * K2O_pct_XRF) + (1.484 * bbwi_kwh_t) + (1.3 * Al2O3_pct_XRF) + (0.46 * Fe_pct_XRF) + (1.6 * CaO_pct_XRF) + (0.253 * SiO2_pct_XRF) - (12.9 * TiO2_pct_XRF) + (0.122 * Fe3O4_pct_SATMAGAN) + (0.9 * MgO_pct_XRF) - (5.7 * P_pct_XRF) - (1.9 * Mn_pct_XRF) - (17 * Cr_pct_XRF) + (1.2 * S_pct_XRF),
+      
+      (K2O_pct_XRF > 0.053) &
+        (bbwi_kwh_t <= 16.71903) & ((1 * Fe3O4_pct_SATMAGAN + 3) <= 29.65) ~
+        -18.1729 + (1.953 * bbwi_kwh_t) + (0.883 * Fe_pct_XRF) - (35.5 * TiO2_pct_XRF) + (0.47 * SiO2_pct_XRF) + (0.164 * Fe3O4_pct_SATMAGAN) + (1.45 * MgO_pct_XRF) - (12.3 * Na2O_pct_XRF),
+      
+      (K2O_pct_XRF <= 0.053) &
+        (Fe3O4_pct_SATMAGAN > 15.85) & (bbwi_kwh_t > 17.03675) ~
+        59.9613 + (0.46 * SCSE_kwh_t) - (7.5 * TiO2_pct_XRF) + (0.33 * Al2O3_pct_XRF) + (0.133 * bbwi_kwh_t) - (0.43 * K2O_pct_XRF) + (0.029 * Fe3O4_pct_SATMAGAN) + (0.2 * CaO_pct_XRF) - (10 * Cr_pct_XRF) - (1.6 * Na2O_pct_XRF) - (0.17 * MgO_pct_XRF) - (0.019 * Fe_pct_XRF) - (0.3 * Mn_pct_XRF) + (0.008 * SiO2_pct_XRF),
+      
+      (K2O_pct_XRF <= 0.053) & (Fe3O4_pct_SATMAGAN <= 15.85) ~
+        54.5597 + (1.34 * Al2O3_pct_XRF) + (0.72 * SCSE_kwh_t) - (10.7 * TiO2_pct_XRF) - (0.67 * K2O_pct_XRF) + (0.127 * bbwi_kwh_t) + (0.037 * Fe3O4_pct_SATMAGAN) - (0.32 * MgO_pct_XRF) - (14 * Cr_pct_XRF) - (0.055 * Fe_pct_XRF) - (2.4 * Na2O_pct_XRF) + (0.23 * CaO_pct_XRF) - (0.3 * Mn_pct_XRF),
+      
+      (bbwi_kwh_t > 21.40164) ~
+        97.4764 + (3.11 * Al2O3_pct_XRF) - (68.4 * TiO2_pct_XRF) - (2.51 * SCSE_kwh_t) + (173 * Cr_pct_XRF) - (0.539 * bbwi_kwh_t) + (0.321 * Fe_pct_XRF) - (11.6 * Na2O_pct_XRF) - (0.99 * K2O_pct_XRF),
+      
+      TRUE ~ NA_real_
+    ),
+    rule = case_when(
+      (K2O_pct_XRF > 0.053) &
+        (bbwi_kwh_t <= 21.40164) & ((1 * Fe3O4_pct_SATMAGAN + 3) > 29.65) ~ 1,
+      (K2O_pct_XRF > 0.053) &
+        (bbwi_kwh_t > 16.71903) &
+        (bbwi_kwh_t <= 21.40164) & ((1 * Fe3O4_pct_SATMAGAN + 3) <= 29.65) ~ 2,
+      (K2O_pct_XRF <= 0.053) &
+        (Fe3O4_pct_SATMAGAN > 15.85) & (bbwi_kwh_t <= 17.03675) ~ 3,
+      (K2O_pct_XRF > 0.053) &
+        (bbwi_kwh_t <= 16.71903) & ((1 * Fe3O4_pct_SATMAGAN + 3) <= 29.65) ~ 4,
+      (K2O_pct_XRF <= 0.053) &
+        (Fe3O4_pct_SATMAGAN > 15.85) & (bbwi_kwh_t > 17.03675) ~ 5,
+      (K2O_pct_XRF <= 0.053) & (Fe3O4_pct_SATMAGAN <= 15.85) ~ 6,
+      (bbwi_kwh_t > 21.40164) ~ 7,
+      TRUE ~ NA_integer_
+    )
+  )
+
+filter_res_dtr <- cubist_7_hig %>% 
+  select(rule, result, hole_id, comp_no) %>%
+  full_join(hig_data %>% filter(type == "DTR Mags" & pass %in% c("P5", "P6")) %>% select(hole_id, comp_no, Fe_pct_XRF, pass)) 
+
+ggplot(filter_res_dtr) +
+  aes(x = result, y = Fe_pct_XRF) +
+  geom_point(aes(colour = as.factor(rule))) +
+  geom_smooth(method = "lm") +
+  geom_abline(lty = 2) +
+  tune::coord_obs_pred() +
+  facet_wrap(~pass) +
+  xlab("Predicted Fe % Con") +
+  labs(title = "Cubist 7 Rules: Fe Con % Predicted vs HIG Actuals")
+
+
+```
+
+## Cubist HIG Data 
+
+```{r}
+
+# HIG Data 
+
+dtr_cubist <- dtr_data %>% 
+  mutate(SCSE_kwh_t = 6.08 + Al2O3_pct_XRF * 0.40 + LOI371_pct * -0.07 * log10(Cr_pct_XRF) * 0.42 + Fe_pct_XRF * 0.25 + Cr_pct_XRF *0.01 + LOI650_pct*0.03 + LOI1000_pct*0.11 + (Al2O3_pct_XRF * LOI371_pct) * -0.20 + (log10(Cr_pct_XRF)*Fe_pct_XRF)*0.05) %>% 
+  mutate(bbwi_kwh_t = 15.50+ Al2O3_pct_XRF*0.41+LOI371_pct*0.36+Fe_pct_XRF*-0.01+Cr_pct_XRF*0+CaO_pct_XRF*0.34+(Al2O3_pct_XRF*LOI371_pct)*1.64+(Fe_pct_XRF*Cr_pct_XRF)*0.24+(LOI371_pct*CaO_pct_XRF)*0.98)
+
+cubist_7_dtr <- dtr_cubist %>%
+  mutate(
+    result = case_when(
+      (K2O_pct_XRF > 0.053) &
+        (bbwi_kwh_t <= 21.40164) & ((1 * Fe3O4_pct_SATMAGAN + 3) > 29.65) ~
+        106.9608 - (0.284 * SiO2_pct_XRF) - (0.289 * Fe_pct_XRF) + (59 * Cr_pct_XRF) - (1.09 * K2O_pct_XRF) - (0.68 * SCSE_kwh_t) - (4.2 * Mn_pct_XRF) - (0.92 * MgO_pct_XRF) - (0.197 * bbwi_kwh_t) - (7.5 * TiO2_pct_XRF) - (0.074 * Fe3O4_pct_SATMAGAN) - (4.1 * Na2O_pct_XRF) + (0.02 * Al2O3_pct_XRF),
+      
+      (K2O_pct_XRF > 0.053) &
+        (bbwi_kwh_t > 16.71903) &
+        (bbwi_kwh_t <= 21.40164) & ((1 * Fe3O4_pct_SATMAGAN + 3) <= 29.65) ~
+        92.9957 - (29.4 * TiO2_pct_XRF) + (84 * Cr_pct_XRF) - (0.225 * SiO2_pct_XRF) + (0.63 * Al2O3_pct_XRF) - (0.75 * SCSE_kwh_t) - (0.222 * Fe_pct_XRF) - (0.95 * K2O_pct_XRF) - (4.1 * Mn_pct_XRF) - (0.93 * MgO_pct_XRF) + (0.088 * Fe3O4_pct_SATMAGAN) - (5.7 * Na2O_pct_XRF) + (0.133 * bbwi_kwh_t) + (0.9 * S_pct_XRF),
+      
+      (K2O_pct_XRF <= 0.053) &
+        (Fe3O4_pct_SATMAGAN > 15.85) & (bbwi_kwh_t <= 17.03675) ~
+        11.3634 - (10.9 * K2O_pct_XRF) + (1.484 * bbwi_kwh_t) + (1.3 * Al2O3_pct_XRF) + (0.46 * Fe_pct_XRF) + (1.6 * CaO_pct_XRF) + (0.253 * SiO2_pct_XRF) - (12.9 * TiO2_pct_XRF) + (0.122 * Fe3O4_pct_SATMAGAN) + (0.9 * MgO_pct_XRF) - (5.7 * P_pct_XRF) - (1.9 * Mn_pct_XRF) - (17 * Cr_pct_XRF) + (1.2 * S_pct_XRF),
+      
+      (K2O_pct_XRF > 0.053) &
+        (bbwi_kwh_t <= 16.71903) & ((1 * Fe3O4_pct_SATMAGAN + 3) <= 29.65) ~
+        -18.1729 + (1.953 * bbwi_kwh_t) + (0.883 * Fe_pct_XRF) - (35.5 * TiO2_pct_XRF) + (0.47 * SiO2_pct_XRF) + (0.164 * Fe3O4_pct_SATMAGAN) + (1.45 * MgO_pct_XRF) - (12.3 * Na2O_pct_XRF),
+      
+      (K2O_pct_XRF <= 0.053) &
+        (Fe3O4_pct_SATMAGAN > 15.85) & (bbwi_kwh_t > 17.03675) ~
+        59.9613 + (0.46 * SCSE_kwh_t) - (7.5 * TiO2_pct_XRF) + (0.33 * Al2O3_pct_XRF) + (0.133 * bbwi_kwh_t) - (0.43 * K2O_pct_XRF) + (0.029 * Fe3O4_pct_SATMAGAN) + (0.2 * CaO_pct_XRF) - (10 * Cr_pct_XRF) - (1.6 * Na2O_pct_XRF) - (0.17 * MgO_pct_XRF) - (0.019 * Fe_pct_XRF) - (0.3 * Mn_pct_XRF) + (0.008 * SiO2_pct_XRF),
+      
+      (K2O_pct_XRF <= 0.053) & (Fe3O4_pct_SATMAGAN <= 15.85) ~
+        54.5597 + (1.34 * Al2O3_pct_XRF) + (0.72 * SCSE_kwh_t) - (10.7 * TiO2_pct_XRF) - (0.67 * K2O_pct_XRF) + (0.127 * bbwi_kwh_t) + (0.037 * Fe3O4_pct_SATMAGAN) - (0.32 * MgO_pct_XRF) - (14 * Cr_pct_XRF) - (0.055 * Fe_pct_XRF) - (2.4 * Na2O_pct_XRF) + (0.23 * CaO_pct_XRF) - (0.3 * Mn_pct_XRF),
+      
+      (bbwi_kwh_t > 21.40164) ~
+        97.4764 + (3.11 * Al2O3_pct_XRF) - (68.4 * TiO2_pct_XRF) - (2.51 * SCSE_kwh_t) + (173 * Cr_pct_XRF) - (0.539 * bbwi_kwh_t) + (0.321 * Fe_pct_XRF) - (11.6 * Na2O_pct_XRF) - (0.99 * K2O_pct_XRF),
+      
+      TRUE ~ NA_real_
+    ),
+    rule = case_when(
+      (K2O_pct_XRF > 0.053) &
+        (bbwi_kwh_t <= 21.40164) & ((1 * Fe3O4_pct_SATMAGAN + 3) > 29.65) ~ 1,
+      (K2O_pct_XRF > 0.053) &
+        (bbwi_kwh_t > 16.71903) &
+        (bbwi_kwh_t <= 21.40164) & ((1 * Fe3O4_pct_SATMAGAN + 3) <= 29.65) ~ 2,
+      (K2O_pct_XRF <= 0.053) &
+        (Fe3O4_pct_SATMAGAN > 15.85) & (bbwi_kwh_t <= 17.03675) ~ 3,
+      (K2O_pct_XRF > 0.053) &
+        (bbwi_kwh_t <= 16.71903) & ((1 * Fe3O4_pct_SATMAGAN + 3) <= 29.65) ~ 4,
+      (K2O_pct_XRF <= 0.053) &
+        (Fe3O4_pct_SATMAGAN > 15.85) & (bbwi_kwh_t > 17.03675) ~ 5,
+      (K2O_pct_XRF <= 0.053) & (Fe3O4_pct_SATMAGAN <= 15.85) ~ 6,
+      (bbwi_kwh_t > 21.40164) ~ 7,
+      TRUE ~ NA_integer_
+    )
+  )
+
+filter_res_dtr <- cubist_7_dtr %>% 
+  filter(process_phase == "Feed") %>% 
+  select(rule, result, grind_P97, hole_id, comp_no) %>%
+  full_join(cubist_7_dtr %>% filter(process_phase == "Cons") %>% select(hole_id, comp_no, Fe_pct_XRF)) 
+
+ggplot(filter_res_dtr) +
+  aes(x = result, y = Fe_pct_XRF) +
+  geom_point(aes(colour = as.factor(rule))) +
+  geom_smooth(method = "lm") +
+  geom_abline(lty = 2) +
+  tune::coord_obs_pred() +
+  facet_wrap(~grind_P97) +
+  labs(title = "Cubist 7 Rules: Fe Con % Predicted vs DTR Actuals")
+
+```
+
